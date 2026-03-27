@@ -1,0 +1,600 @@
+<!DOCTYPE html>
+<html lang="ko" class="dark">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>근수축 활주설 시뮬레이션</title>
+    <!-- Tailwind 설정 추가 (다크모드 지원) -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = {
+            darkMode: 'class',
+            theme: {
+                extend: {}
+            }
+        }
+    </script>
+    <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@400;500;700&display=swap" rel="stylesheet">
+    <style>
+        body {
+            font-family: 'Noto Sans KR', sans-serif;
+            margin: 0;
+            overflow: hidden;
+            touch-action: none; /* Prevent browser default panning/zooming */
+            display: flex;
+            flex-direction: column;
+            height: 100vh;
+            transition: background-color 0.3s, color 0.3s;
+        }
+        
+        /* 기본 상태 (라이트) */
+        body { background-color: #f9fafb; color: #111827; }
+        /* 다크 모드 상태 */
+        .dark body { background-color: #111827; color: #f3f4f6; }
+
+        #canvas-container {
+            flex: 1;
+            position: relative;
+            width: 100%;
+            overflow: hidden;
+        }
+        canvas {
+            display: block;
+            width: 100%;
+            height: 100%;
+        }
+
+        /* Glass Panel */
+        .glass-panel {
+            background: rgba(255, 255, 255, 0.85);
+            backdrop-filter: blur(8px);
+            border: 1px solid rgba(209, 213, 219, 0.5);
+            border-radius: 12px;
+            color: #111827;
+            transition: all 0.3s ease;
+        }
+        .dark .glass-panel {
+            background: rgba(31, 41, 55, 0.85);
+            border-color: rgba(75, 85, 99, 0.5);
+            color: #f3f4f6;
+        }
+
+        /* Value Box */
+        .value-box {
+            background: #f3f4f6;
+            border-radius: 8px;
+            padding: 8px 12px;
+            text-align: center;
+            transition: background-color 0.3s;
+        }
+        .dark .value-box { background: rgba(17, 24, 39, 0.8); }
+
+        .value-label {
+            font-size: 0.75rem;
+            color: #6b7280;
+            margin-bottom: 2px;
+            transition: color 0.3s;
+        }
+        .dark .value-label { color: #9ca3af; }
+
+        .value-number {
+            font-size: 1.25rem;
+            font-weight: 700;
+            font-variant-numeric: tabular-nums;
+        }
+
+        /* Color coding for texts */
+        .text-a-band { color: #ef4444; } /* Red */
+        .text-i-band { color: #3b82f6; } /* Blue */
+        .text-h-zone { color: #f59e0b; } /* Yellow */
+        .text-sarcomere { color: #10b981; } /* Green */
+        
+        .grab-cursor { cursor: grab; }
+        .grabbing-cursor { cursor: grabbing; }
+        .ew-resize-cursor { cursor: ew-resize; }
+    </style>
+</head>
+<body class="transition-colors duration-300">
+
+    <!-- UI Header -->
+    <div class="relative w-full p-3 md:p-4 z-10 bg-white border-b border-gray-200 dark:bg-gray-800 dark:border-gray-700 shadow-md flex-shrink-0 transition-colors duration-300">
+        <!-- Theme Toggle Button -->
+        <button id="theme-toggle" class="absolute top-3 right-3 md:top-4 md:right-4 px-3 py-1.5 text-xs md:text-sm font-medium rounded-full bg-gray-100 hover:bg-gray-200 text-gray-800 dark:bg-gray-700 dark:hover:bg-gray-600 dark:text-gray-200 transition-colors shadow-sm">
+            ☀️ 라이트
+        </button>
+
+        <div class="max-w-4xl mx-auto flex flex-col items-center gap-3">
+            <h1 class="text-lg md:text-2xl font-bold text-center mt-6 md:mt-0">근수축 활주설 (Sliding Filament Theory)</h1>
+            
+            <!-- Metrics Grid -->
+            <div class="grid grid-cols-2 md:grid-cols-4 gap-2 md:gap-3 w-full">
+                <div class="value-box">
+                    <div class="value-label">근육 원섬유 마디 (X)</div>
+                    <div class="value-number text-sarcomere"><span id="val-s">2.40</span> <span class="text-sm font-normal">㎛</span></div>
+                </div>
+                <div class="value-box">
+                    <div class="value-label">A대 (암대) - 일정</div>
+                    <div class="value-number text-a-band"><span id="val-a">1.60</span> <span class="text-sm font-normal">㎛</span></div>
+                </div>
+                <div class="value-box">
+                    <div class="value-label">I대 (명대)</div>
+                    <div class="value-number text-i-band"><span id="val-i">0.80</span> <span class="text-sm font-normal">㎛</span></div>
+                </div>
+                <div class="value-box">
+                    <div class="value-label">H대</div>
+                    <div class="value-number text-h-zone"><span id="val-h">0.40</span> <span class="text-sm font-normal">㎛</span></div>
+                </div>
+            </div>
+
+            <div class="text-center text-xs md:text-sm text-gray-500 dark:text-gray-400 transition-colors">
+                <span class="inline-block md:mr-4">👆 <strong>Z선(파란색 기둥)</strong>을 좌우로 드래그하여 수축/이완시키세요.</span>
+                <span class="inline-block mt-1 md:mt-0">🔍 빈 공간 드래그(이동), 두 손가락/마우스 휠(확대/축소)</span>
+            </div>
+        </div>
+    </div>
+
+    <!-- Canvas Container -->
+    <div id="canvas-container">
+        <!-- Controls Overlay -->
+        <div class="absolute bottom-6 right-6 flex gap-3 z-10 pointer-events-auto">
+            <button id="btn-reset-view" class="glass-panel px-4 py-2 hover:bg-gray-200 dark:hover:bg-gray-700 transition font-medium">화면 중앙정렬</button>
+            <button id="btn-reset-sim" class="glass-panel px-4 py-2 hover:bg-gray-200 dark:hover:bg-gray-700 transition font-medium text-blue-600 dark:text-blue-400 border-blue-300 dark:border-blue-500/50">초기화</button>
+        </div>
+
+        <!-- Canvas for Rendering -->
+        <canvas id="sim-canvas" class="grab-cursor"></canvas>
+    </div>
+
+    <script>
+        const canvas = document.getElementById('sim-canvas');
+        const ctx = canvas.getContext('2d', { alpha: false });
+
+        // Theme Toggle Logic
+        const themeToggleBtn = document.getElementById('theme-toggle');
+        const htmlEl = document.documentElement;
+
+        themeToggleBtn.addEventListener('click', () => {
+            htmlEl.classList.toggle('dark');
+            const isDark = htmlEl.classList.contains('dark');
+            themeToggleBtn.innerHTML = isDark ? '☀️ 라이트' : '🌙 다크';
+            draw(); // 모드 변경 시 캔버스 다시 그리기
+        });
+
+        // DOM Elements for values
+        const elValS = document.getElementById('val-s');
+        const elValA = document.getElementById('val-a');
+        const elValI = document.getElementById('val-i');
+        const elValH = document.getElementById('val-h');
+
+        // Biological Constants (in micrometers)
+        const MYOSIN_LENGTH = 1.6; // A band is constant
+        const ACTIN_LENGTH = 1.0;  // Length of actin filament from Z-disc
+        
+        // Simulation State
+        let zPos = 1.2; // Distance from M-line to Z-disc (half of sarcomere length). Range: 1.0 to 1.5
+        const MIN_Z = 1.0; // Max contraction (Actin ends touch at M-line)
+        const MAX_Z = 1.5; // Max relaxation (Very little overlap)
+
+        // Camera / Viewport State
+        let camera = { x: 0, y: 0, zoom: 1 };
+        const PIXELS_PER_UM = 300; // 1 um = 300 pixels at zoom 1.0
+
+        // Interaction State
+        let pointers = new Map(); // Store active touches/mouse
+        let isDraggingZ = false;
+        let dragZSide = 0; // -1 for left Z-disc, 1 for right Z-disc
+        let initialPinchDistance = null;
+        let initialZoom = 1;
+        let lastPanPos = null;
+
+        const container = document.getElementById('canvas-container');
+
+        // Resize Handling
+        function resize() {
+            const dpr = window.devicePixelRatio || 1;
+            const rect = container.getBoundingClientRect();
+            canvas.width = rect.width * dpr;
+            canvas.height = rect.height * dpr;
+            ctx.scale(dpr, dpr);
+            canvas.style.width = rect.width + 'px';
+            canvas.style.height = rect.height + 'px';
+            
+            // Center camera on resize if not manually panned
+            if (camera.x === 0 && camera.y === 0) {
+                camera.x = rect.width / 2;
+                camera.y = rect.height / 2;
+            }
+            draw();
+        }
+        window.addEventListener('resize', resize);
+
+        // Core Drawing Function
+        function draw() {
+            const isDark = htmlEl.classList.contains('dark');
+
+            // Background based on theme
+            ctx.fillStyle = isDark ? '#111827' : '#f9fafb';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+            ctx.save();
+            
+            // Apply Camera Transform
+            ctx.translate(camera.x, camera.y);
+            ctx.scale(camera.zoom, camera.zoom);
+
+            const scale = PIXELS_PER_UM;
+            const myosinR = MYOSIN_LENGTH / 2 * scale;
+            const zR = zPos * scale;
+            const actinLen = ACTIN_LENGTH * scale;
+            
+            // Draw Grid/Measurements Background
+            drawMeasurementsBackground(zR, myosinR, scale);
+
+            // Draw Myosin (Thick Filaments - A Band)
+            // Draw multiple rows for visual effect
+            const filamentSpacing = 40;
+            const numMyosin = 5;
+            const startY = - (numMyosin - 1) * filamentSpacing / 2;
+
+            for (let i = 0; i < numMyosin; i++) {
+                let y = startY + i * filamentSpacing;
+                drawMyosinFilament(-myosinR, myosinR, y);
+            }
+
+            // Draw Actin (Thin Filaments) attached to Z-discs
+            const numActin = 6;
+            const startYActin = - (numActin - 1) * filamentSpacing / 2;
+            
+            for (let i = 0; i < numActin; i++) {
+                let y = startYActin + i * filamentSpacing;
+                // Left Actin
+                drawActinFilament(-zR, -zR + actinLen, y);
+                // Right Actin
+                drawActinFilament(zR, zR - actinLen, y);
+            }
+
+            // Draw Z-discs (Z선)
+            drawZDisc(-zR, startYActin - 20, startYActin + (numActin-1)*filamentSpacing + 20, isDark);
+            drawZDisc(zR, startYActin - 20, startYActin + (numActin-1)*filamentSpacing + 20, isDark);
+
+            // Draw M-line (M선)
+            drawMLine(startY - 30, startY + (numMyosin-1)*filamentSpacing + 30);
+
+            // Draw Interactive Handles on Z-discs
+            drawDragHandle(-zR, startYActin - 60);
+            drawDragHandle(zR, startYActin - 60);
+
+            ctx.restore();
+
+            // Update UI Numbers
+            updateNumbers();
+        }
+
+        // --- Drawing Helpers ---
+
+        function drawMyosinFilament(x1, x2, y) {
+            ctx.beginPath();
+            ctx.moveTo(x1, y);
+            ctx.lineTo(x2, y);
+            ctx.lineWidth = 12;
+            ctx.strokeStyle = '#ef4444'; // Red
+            ctx.lineCap = 'round';
+            ctx.stroke();
+
+            // Myosin heads (cross-bridges)
+            ctx.lineWidth = 3;
+            ctx.strokeStyle = '#fca5a5';
+            for (let x = x1 + 20; x < -20; x += 15) {
+                ctx.beginPath(); ctx.moveTo(x, y); ctx.lineTo(x+8, y-8); ctx.stroke();
+                ctx.beginPath(); ctx.moveTo(x, y); ctx.lineTo(x+8, y+8); ctx.stroke();
+            }
+            for (let x = 20; x < x2 - 20; x += 15) {
+                ctx.beginPath(); ctx.moveTo(x, y); ctx.lineTo(x-8, y-8); ctx.stroke();
+                ctx.beginPath(); ctx.moveTo(x, y); ctx.lineTo(x-8, y+8); ctx.stroke();
+            }
+        }
+
+        function drawActinFilament(x1, x2, y) {
+            ctx.beginPath();
+            ctx.moveTo(x1, y);
+            ctx.lineTo(x2, y);
+            ctx.lineWidth = 5;
+            ctx.strokeStyle = '#3b82f6'; // Blue
+            ctx.lineCap = 'round';
+            ctx.stroke();
+            
+            // Actin beads effect
+            ctx.fillStyle = '#93c5fd';
+            let dir = x1 < x2 ? 1 : -1;
+            for(let d=10; d < Math.abs(x1-x2); d+=12) {
+                ctx.beginPath();
+                ctx.arc(x1 + d*dir, y, 3, 0, Math.PI*2);
+                ctx.fill();
+            }
+        }
+
+        function drawZDisc(x, y1, y2, isDark) {
+            ctx.beginPath();
+            ctx.moveTo(x, y1 - 20);
+            ctx.lineTo(x, y2 + 20);
+            ctx.lineWidth = 8;
+            ctx.strokeStyle = '#60a5fa'; // Light Blue
+            ctx.stroke();
+
+            // Zig-zag pattern overlay
+            ctx.beginPath();
+            ctx.moveTo(x - 5, y1 - 20);
+            for(let y = y1-10; y <= y2+20; y+=20) {
+                ctx.lineTo(x + 5, y - 10);
+                ctx.lineTo(x - 5, y);
+            }
+            ctx.lineWidth = 2;
+            ctx.strokeStyle = isDark ? '#ffffff' : '#eff6ff'; // Adjust zigzag color for visibility
+            ctx.stroke();
+        }
+
+        function drawMLine(y1, y2) {
+            ctx.beginPath();
+            ctx.moveTo(0, y1);
+            ctx.lineTo(0, y2);
+            ctx.lineWidth = 4;
+            ctx.strokeStyle = '#9ca3af';
+            ctx.setLineDash([10, 10]);
+            ctx.stroke();
+            ctx.setLineDash([]);
+        }
+
+        function drawDragHandle(x, y) {
+            ctx.fillStyle = 'rgba(59, 130, 246, 0.2)';
+            ctx.beginPath();
+            ctx.arc(x, y, 30, 0, Math.PI*2);
+            ctx.fill();
+            
+            ctx.fillStyle = '#60a5fa';
+            ctx.beginPath();
+            ctx.arc(x, y, 15, 0, Math.PI*2);
+            ctx.fill();
+
+            // Arrows
+            ctx.fillStyle = '#ffffff';
+            ctx.font = '16px "Font Awesome 6 Free"';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            // Simple triangle arrows
+            ctx.beginPath(); ctx.moveTo(x-8, y); ctx.lineTo(x-3, y-5); ctx.lineTo(x-3, y+5); ctx.fill();
+            ctx.beginPath(); ctx.moveTo(x+8, y); ctx.lineTo(x+3, y-5); ctx.lineTo(x+3, y+5); ctx.fill();
+        }
+
+        function drawMeasurementsBackground(zR, myosinR, scale) {
+            const hZoneHalf = zR - ACTIN_LENGTH * scale;
+            
+            // Background Highlighting
+            // A Band (Darker)
+            ctx.fillStyle = 'rgba(239, 68, 68, 0.05)';
+            ctx.fillRect(-myosinR, -150, myosinR*2, 300);
+            
+            // H Zone (Lighter inside A band)
+            ctx.fillStyle = 'rgba(245, 158, 11, 0.1)';
+            ctx.fillRect(-hZoneHalf, -150, hZoneHalf*2, 300);
+
+            // I Band (Actin only)
+            ctx.fillStyle = 'rgba(59, 130, 246, 0.05)';
+            ctx.fillRect(-zR, -150, zR - myosinR, 300);
+            ctx.fillRect(myosinR, -150, zR - myosinR, 300);
+
+            // Calculate values for display
+            const sVal = (zPos * 2).toFixed(2);
+            const aVal = MYOSIN_LENGTH.toFixed(2);
+            const iHalfVal = ((zPos * 2 - MYOSIN_LENGTH) / 2).toFixed(2);
+            const hVal = Math.max(0, (zPos * 2) - (ACTIN_LENGTH * 2)).toFixed(2);
+
+            // Dimension Lines (Bottom)
+            const dimY = 180;
+            
+            // Sarcomere
+            drawDimensionLine(-zR, zR, dimY + 60, `근육 원섬유 마디 (X): ${sVal} ㎛`, '#10b981');
+            
+            // A Band
+            drawDimensionLine(-myosinR, myosinR, dimY, `A대: ${aVal} ㎛`, '#ef4444');
+            
+            // I Band (half shown on right for clarity, or both)
+            drawDimensionLine(myosinR, zR, dimY, `I대/2: ${iHalfVal} ㎛`, '#3b82f6');
+            drawDimensionLine(-zR, -myosinR, dimY, `I대/2: ${iHalfVal} ㎛`, '#3b82f6');
+            
+            // H Zone
+            drawDimensionLine(-hZoneHalf, hZoneHalf, dimY - 30, `H대: ${hVal} ㎛`, '#f59e0b');
+        }
+
+        function drawDimensionLine(x1, x2, y, text, color) {
+            ctx.beginPath();
+            ctx.moveTo(x1, y - 5); ctx.lineTo(x1, y + 5);
+            ctx.moveTo(x2, y - 5); ctx.lineTo(x2, y + 5);
+            ctx.moveTo(x1, y); ctx.lineTo(x2, y);
+            ctx.strokeStyle = color;
+            ctx.lineWidth = 2;
+            ctx.stroke();
+
+            ctx.fillStyle = color;
+            ctx.font = 'bold 18px Noto Sans KR';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'bottom';
+            ctx.fillText(text, (x1 + x2) / 2, y - 8);
+        }
+
+        function updateNumbers() {
+            const s = zPos * 2;
+            const a = MYOSIN_LENGTH;
+            const h = s - (ACTIN_LENGTH * 2);
+            const i = s - a;
+
+            elValS.innerText = s.toFixed(2);
+            // elValA is constant 1.60
+            elValI.innerText = i.toFixed(2);
+            // Prevent negative H zone display due to float precision if heavily contracted
+            elValH.innerText = Math.max(0, h).toFixed(2); 
+        }
+
+        // --- Interaction Logic ---
+
+        function getCanvasPos(clientX, clientY) {
+            const rect = canvas.getBoundingClientRect();
+            return {
+                x: clientX - rect.left,
+                y: clientY - rect.top
+            };
+        }
+
+        function getWorldPos(screenX, screenY) {
+            return {
+                x: (screenX - camera.x) / camera.zoom,
+                y: (screenY - camera.y) / camera.zoom
+            };
+        }
+
+        function checkZDiscHit(worldX, worldY) {
+            const zR = zPos * PIXELS_PER_UM;
+            // Hitbox around Z discs
+            const hitWidth = 60 / camera.zoom;
+            if (Math.abs(worldX - zR) < hitWidth) return 1; // Right Z
+            if (Math.abs(worldX - (-zR)) < hitWidth) return -1; // Left Z
+            return 0;
+        }
+
+        // Event Listeners
+        canvas.addEventListener('pointerdown', (e) => {
+            const pos = getCanvasPos(e.clientX, e.clientY);
+            pointers.set(e.pointerId, pos);
+            
+            if (pointers.size === 1) {
+                const wPos = getWorldPos(pos.x, pos.y);
+                const hit = checkZDiscHit(wPos.x, wPos.y);
+                
+                if (hit !== 0) {
+                    isDraggingZ = true;
+                    dragZSide = hit;
+                    canvas.classList.replace('grab-cursor', 'ew-resize-cursor');
+                } else {
+                    lastPanPos = pos;
+                    canvas.classList.replace('grab-cursor', 'grabbing-cursor');
+                }
+            } else if (pointers.size === 2) {
+                // Start Pinch Zoom
+                isDraggingZ = false;
+                const pts = Array.from(pointers.values());
+                initialPinchDistance = Math.hypot(pts[0].x - pts[1].x, pts[0].y - pts[1].y);
+                initialZoom = camera.zoom;
+            }
+        });
+
+        canvas.addEventListener('pointermove', (e) => {
+            if (!pointers.has(e.pointerId)) return;
+            const pos = getCanvasPos(e.clientX, e.clientY);
+            pointers.set(e.pointerId, pos);
+
+            if (isDraggingZ && pointers.size === 1) {
+                const wPos = getWorldPos(pos.x, pos.y);
+                // Calculate new zPos based on dragged side
+                let newZPos = (wPos.x * dragZSide) / PIXELS_PER_UM;
+                
+                // Clamp limits
+                newZPos = Math.max(MIN_Z, Math.min(MAX_Z, newZPos));
+                
+                // 전체 길이(zPos * 2)를 0.1 단위로 스냅(Snap) 처리
+                let totalLength = newZPos * 2;
+                totalLength = Math.round(totalLength * 10) / 10;
+                zPos = totalLength / 2;
+                
+                draw();
+            } 
+            else if (lastPanPos && pointers.size === 1) {
+                // Panning
+                camera.x += pos.x - lastPanPos.x;
+                camera.y += pos.y - lastPanPos.y;
+                lastPanPos = pos;
+                draw();
+            }
+            else if (pointers.size === 2 && initialPinchDistance) {
+                // Pinch Zooming
+                const pts = Array.from(pointers.values());
+                const currentDist = Math.hypot(pts[0].x - pts[1].x, pts[0].y - pts[1].y);
+                const zoomFactor = currentDist / initialPinchDistance;
+                
+                // Calculate center of pinch
+                const centerX = (pts[0].x + pts[1].x) / 2;
+                const centerY = (pts[0].y + pts[1].y) / 2;
+
+                // Adjust camera to zoom towards pinch center
+                const newZoom = Math.max(0.3, Math.min(3.0, initialZoom * zoomFactor));
+                
+                const zoomRatio = newZoom / camera.zoom;
+                camera.x = centerX - (centerX - camera.x) * zoomRatio;
+                camera.y = centerY - (centerY - camera.y) * zoomRatio;
+                camera.zoom = newZoom;
+                
+                draw();
+            }
+
+            // Update cursor on hover if not interacting
+            if (pointers.size === 0) {
+                const pos = getCanvasPos(e.clientX, e.clientY);
+                const wPos = getWorldPos(pos.x, pos.y);
+                if (checkZDiscHit(wPos.x, wPos.y) !== 0) {
+                    canvas.style.cursor = 'ew-resize';
+                } else {
+                    canvas.style.cursor = 'grab';
+                }
+            }
+        });
+
+        const handlePointerUp = (e) => {
+            pointers.delete(e.pointerId);
+            if (pointers.size < 2) initialPinchDistance = null;
+            if (pointers.size === 0) {
+                isDraggingZ = false;
+                lastPanPos = null;
+                canvas.classList.remove('grabbing-cursor', 'ew-resize-cursor');
+                canvas.classList.add('grab-cursor');
+                canvas.style.cursor = ''; // reset inline style
+            }
+        };
+
+        canvas.addEventListener('pointerup', handlePointerUp);
+        canvas.addEventListener('pointercancel', handlePointerUp);
+        canvas.addEventListener('pointerout', handlePointerUp);
+
+        // Mouse Wheel Zoom
+        canvas.addEventListener('wheel', (e) => {
+            e.preventDefault();
+            const pos = getCanvasPos(e.clientX, e.clientY);
+            const zoomSpeed = 0.001;
+            const delta = -e.deltaY * zoomSpeed;
+            const newZoom = Math.max(0.3, Math.min(3.0, camera.zoom * (1 + delta)));
+            
+            const zoomRatio = newZoom / camera.zoom;
+            camera.x = pos.x - (pos.x - camera.x) * zoomRatio;
+            camera.y = pos.y - (pos.y - camera.y) * zoomRatio;
+            camera.zoom = newZoom;
+            
+            draw();
+        }, { passive: false });
+
+        // Buttons
+        document.getElementById('btn-reset-view').addEventListener('click', () => {
+            const rect = container.getBoundingClientRect();
+            camera.x = rect.width / 2;
+            camera.y = rect.height / 2;
+            camera.zoom = rect.width < 768 ? 0.6 : 1.0; // Auto scale for mobile
+            draw();
+        });
+
+        document.getElementById('btn-reset-sim').addEventListener('click', () => {
+            zPos = 1.2;
+            document.getElementById('btn-reset-view').click();
+        });
+
+        // Initialize
+        resize();
+        document.getElementById('btn-reset-view').click(); // Initial center
+    </script>
+</body>
+</html>
